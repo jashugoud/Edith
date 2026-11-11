@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b1220">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Edith</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+  :root { --bg:#0b1220; --panel:#121b2e; --line:#22304d; --text:#e8eefc; --muted:#8fa0c4; --accent:#4cc3ff; --user:#1c4a7a; }
+  * { box-sizing:border-box; }
+  html, body { height:100%; margin:0; background:var(--bg); color:var(--text); font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  #app { display:flex; flex-direction:column; height:100dvh; max-width:720px; margin:0 auto; padding-top:env(safe-area-inset-top); }
+  header { display:flex; align-items:center; gap:8px; padding:10px 14px; border-bottom:1px solid var(--line); }
+  header h1 { flex:1; margin:0; font-size:18px; letter-spacing:.5px; }
+  header h1 small { display:block; font-size:12px; font-weight:400; color:var(--muted); }
+  button { font:inherit; color:var(--text); background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:8px 12px; cursor:pointer; }
+  button:active { filter:brightness(1.3); }
+  button.primary { background:var(--accent); color:#04121f; border-color:var(--accent); font-weight:600; }
+  #msgs { flex:1; overflow-y:auto; padding:14px; display:flex; flex-direction:column; gap:10px; }
+  .bubble { max-width:86%; padding:10px 14px; border-radius:16px; white-space:pre-wrap; word-wrap:break-word; }
+  .bubble.assistant { align-self:flex-start; background:var(--panel); border:1px solid var(--line); border-bottom-left-radius:4px; }
+  .bubble.user { align-self:flex-end; background:var(--user); border-bottom-right-radius:4px; }
+  .bubble.error { border-color:#7a2b2b; color:#ffb4b4; }
+  footer { display:flex; gap:8px; align-items:flex-end; padding:10px 12px calc(10px + env(safe-area-inset-bottom)); border-top:1px solid var(--line); }
+  textarea { flex:1; resize:none; max-height:120px; min-height:44px; font:inherit; color:var(--text); background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:10px 12px; }
+  #mic.on { background:#7a2b2b; border-color:#c04040; }
+  #toast { position:fixed; left:50%; bottom:90px; transform:translateX(-50%); background:#223; border:1px solid var(--line); padding:8px 14px; border-radius:20px; font-size:14px; opacity:0; pointer-events:none; transition:opacity .2s; max-width:90%; text-align:center; }
+  #toast.show { opacity:1; }
+  dialog { width:min(560px,94vw); max-height:92dvh; overflow:auto; background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:16px; padding:16px; }
+  dialog::backdrop { background:rgba(0,0,0,.6); }
+  dialog h2 { margin:0 0 4px; font-size:18px; }
+  label { display:block; margin:12px 0 4px; font-size:13px; color:var(--muted); }
+  input, select, dialog textarea { width:100%; font:inherit; color:var(--text); background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:9px 10px; }
+  dialog textarea { min-height:90px; }
+  .row { display:flex; gap:8px; margin-top:16px; }
+  .row button { flex:1; }
+  .hint { font-size:12px; color:var(--muted); margin-top:4px; }
+  #testResult { margin-top:10px; font-size:14px; word-break:break-word; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>Edith<small>Your personal AI</small></h1>
+    <button id="speakBtn" title="Voice on/off">🔊</button>
+    <button id="clearBtn" title="Clear chat">🗑</button>
+    <button id="settingsBtn" title="Settings">⚙️</button>
+  </header>
+  <div id="msgs"></div>
+  <footer>
+    <button id="mic" title="Talk to Edith">🎤</button>
+    <textarea id="input" rows="1" placeholder="Message Edith…"></textarea>
+    <button id="send" class="primary">Send</button>
+  </footer>
+</div>
+<div id="toast"></div>
+
+<dialog id="dlg">
+  <h2>Connect Edith's brain</h2>
+  <div class="hint">Your keys are saved only on this device and sent only to the provider you pick.</div>
+
+  <label for="preset">Brain</label>
+  <select id="preset"></select>
+
+  <label for="apiKey">API key</label>
+  <input id="apiKey" type="password" autocomplete="off" placeholder="Paste your key (not needed for Ollama)">
+
+  <label for="model">Model</label>
+  <input id="model" autocomplete="off">
+
+  <label for="baseUrl">Server URL</label>
+  <input id="baseUrl" autocomplete="off" inputmode="url">
+  <div class="hint">For your own agent or OpenJarvis, choose "Custom" and enter its OpenAI-compatible URL (ending in /v1).</div>
+
+  <label for="systemPrompt">Personality</label>
+  <textarea id="systemPrompt"></textarea>
+
+  <label for="voiceMode">Voice</label>
+  <select id="voiceMode">
+    <option value="browser">Phone's built-in voice</option>
+    <option value="cartesia">Cartesia (your key)</option>
+    <option value="server">My Edith voice server</option>
+    <option value="off">Off</option>
+  </select>
+  <div id="cartesiaBox" hidden>
+    <label for="cartesiaKey">Cartesia API key</label>
+    <input id="cartesiaKey" type="password" autocomplete="off">
+    <label for="cartesiaVoice">Cartesia voice ID</label>
+    <input id="cartesiaVoice" autocomplete="off">
+  </div>
+  <div id="serverBox" hidden>
+    <label for="voiceServerUrl">Voice server URL</label>
+    <input id="voiceServerUrl" autocomplete="off" inputmode="url" placeholder="https://your-voice-server.example.com">
+  </div>
+
+  <div id="testResult"></div>
+  <div class="row">
+    <button id="test">Test</button>
+    <button id="cancel">Close</button>
+    <button id="save" class="primary">Save</button>
+  </div>
+</dialog>
+<script src="app.js"></script>
+</body>
+</html>
