@@ -26,10 +26,21 @@
   .bubble.assistant { align-self:flex-start; background:var(--panel); border:1px solid var(--line); border-bottom-left-radius:4px; }
   .bubble.user { align-self:flex-end; background:var(--user); border-bottom-right-radius:4px; }
   .bubble.error { border-color:#7a2b2b; color:#ffb4b4; }
+  .applink { display:inline-block; margin-top:8px; padding:8px 14px; border-radius:10px; background:var(--accent); color:#04121f; font-weight:600; text-decoration:none; }
+  #stage { display:flex; flex-direction:column; align-items:center; gap:6px; padding:8px 0 4px; }
+  #orb { width:88px; height:88px; border-radius:50%; padding:0; font-size:42px; font-weight:600; color:var(--text); background:radial-gradient(circle at 35% 30%, #1d4f86, #12284a 70%); border:2px solid var(--accent); box-shadow:0 0 0 0 rgba(76,195,255,.5); }
+  #orb[data-state="listening"] { animation:pulse 1.2s infinite; background:radial-gradient(circle at 35% 30%, #2a7bc4, #14335c 70%); }
+  #orb[data-state="thinking"] { animation:spin 1s linear infinite; border-style:dashed; }
+  #orb[data-state="speaking"] { animation:pulse 2s infinite; border-color:#7affb2; }
+  #status { font-size:13px; color:var(--muted); min-height:18px; }
+  #earBtn.on { background:var(--accent); color:#04121f; border-color:var(--accent); }
+  @keyframes pulse { 0% { box-shadow:0 0 0 0 rgba(76,195,255,.55); } 70% { box-shadow:0 0 0 22px rgba(76,195,255,0); } 100% { box-shadow:0 0 0 0 rgba(76,195,255,0); } }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { #orb { animation:none !important; } }
   footer { display:flex; gap:8px; align-items:flex-end; padding:10px 12px calc(10px + env(safe-area-inset-bottom)); border-top:1px solid var(--line); }
   textarea { flex:1; resize:none; max-height:120px; min-height:44px; font:inherit; color:var(--text); background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:10px 12px; }
   #mic.on { background:#7a2b2b; border-color:#c04040; }
-  #toast { position:fixed; left:50%; bottom:90px; transform:translateX(-50%); background:#223; border:1px solid var(--line); padding:8px 14px; border-radius:20px; font-size:14px; opacity:0; pointer-events:none; transition:opacity .2s; max-width:90%; text-align:center; }
+  #toast { position:fixed; left:50%; bottom:190px; transform:translateX(-50%); background:#223; border:1px solid var(--line); padding:8px 14px; border-radius:20px; font-size:14px; opacity:0; pointer-events:none; transition:opacity .2s; max-width:90%; text-align:center; }
   #toast.show { opacity:1; }
   dialog { width:min(560px,94vw); max-height:92dvh; overflow:auto; background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:16px; padding:16px; }
   dialog::backdrop { background:rgba(0,0,0,.6); }
@@ -48,13 +59,17 @@
 <div id="app">
   <header>
     <h1>Edith<small>Your personal AI</small></h1>
+    <button id="earBtn" title="Say Edith to wake her" aria-pressed="false">👂</button>
     <button id="speakBtn" title="Voice on/off">🔊</button>
     <button id="clearBtn" title="Clear chat">🗑</button>
     <button id="settingsBtn" title="Settings">⚙️</button>
   </header>
   <div id="msgs"></div>
+  <div id="stage">
+    <button id="orb" data-state="idle" aria-label="Talk to Edith">E</button>
+    <div id="status"></div>
+  </div>
   <footer>
-    <button id="mic" title="Talk to Edith">🎤</button>
     <textarea id="input" rows="1" placeholder="Message Edith…"></textarea>
     <button id="send" class="primary">Send</button>
   </footer>

@@ -10,8 +10,8 @@ const DEFAULT_PROMPT =
 const PRESETS = {
   claude: { label: 'Claude (Anthropic)', type: 'anthropic', baseUrl: 'https://api.anthropic.com/v1', model: 'claude-sonnet-5-5' },
   openai: { label: 'OpenAI (ChatGPT)', type: 'openai', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
-  gemini: { label: 'Google Gemini', type: 'openai', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-2.0-flash' },
-  groq: { label: 'Groq (fast, free tier)', type: 'openai', baseUrl: 'https://api.groq.com/openai/v1', model: 'llama-3.3-70b-versatile' },
+  gemini: { label: 'Google Gemini', type: 'openai', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-3.8-flash' },
+  groq: { label: 'Groq (fast, free tier)', type: 'openai', baseUrl: 'https://api.groq.com/openai/v1', model: 'llama-3.1-8b-instant' },
   openrouter: { label: 'OpenRouter (many models)', type: 'openai', baseUrl: 'https://openrouter.ai/api/v1', model: 'openai/gpt-4o-mini' },
   ollama: { label: 'Ollama on my PC', type: 'openai', baseUrl: 'http://localhost:11434/v1', model: 'llama3.2' },
   custom: { label: 'Custom / my own agent (OpenAI-compatible URL)', type: 'openai', baseUrl: '', model: '' },
@@ -27,11 +27,11 @@ const DEFAULT_SETTINGS = {
   cartesiaKey: '',
   cartesiaVoice: '',
   voiceServerUrl: '',
+  wakeWord: false,
 };
 
 // ---------- pure helpers (unit-tested in Node) ----------
 
-// Split a streaming buffer into complete SSE events (their data payloads) and the leftover.
 function parseSSE(buffer) {
   const parts = buffer.split(/\r?\n\r?\n/);
   const rest = parts.pop();
@@ -47,7 +47,6 @@ function parseSSE(buffer) {
   return { events, rest };
 }
 
-// Turn one SSE data payload into {text} | {done} | {error}, for either API style.
 function deltaFromEvent(data) {
   if (data === '[DONE]') return { done: true };
   let j;
@@ -76,7 +75,6 @@ function cleanForSpeech(t) {
     .trim();
 }
 
-// Build the fetch() arguments for the chosen provider.
 function buildRequest(settings, history) {
   const preset = PRESETS[settings.preset] || PRESETS.custom;
   const base = (settings.baseUrl || '').replace(/\/+$/, '');
@@ -118,7 +116,6 @@ function buildRequest(settings, history) {
   };
 }
 
-// Stream a reply; calls onText(fullSoFar) as it grows. Returns the final text.
 async function streamChat(settings, history, onText, signal, fetchImpl) {
   const doFetch = fetchImpl || fetch;
   const { url, init } = buildRequest(settings, history);
@@ -154,8 +151,71 @@ async function streamChat(settings, history, onText, signal, fetchImpl) {
   return full;
 }
 
+// --- wake word: "Edith" (speech recognition often hears it as edit / adith / idith) ---
+const WAKE_RE = /\b(?:(?:hey|hi|hello|ok|okay)\s+)?(?:edith|edit|eadith|adith|idith|edeth|edis)\b[\s,.:;!?-]*/i;
+
+function findWake(text) {
+  const m = WAKE_RE.exec(String(text));
+  if (!m) return null;
+  return { command: String(text).slice(m.index + m[0].length).trim() };
+}
+
+// --- opening apps by voice ---
+const APPS = {
+  whatsapp: { name: 'WhatsApp', pkg: 'com.whatsapp', web: 'https://web.whatsapp.com' },
+  youtube: { name: 'YouTube', pkg: 'com.google.android.youtube', web: 'https://m.youtube.com' },
+  instagram: { name: 'Instagram', pkg: 'com.instagram.android', web: 'https://www.instagram.com' },
+  snapchat: { name: 'Snapchat', pkg: 'com.snapchat.android', web: 'https://www.snapchat.com' },
+  gmail: { name: 'Gmail', pkg: 'com.google.android.gm', web: 'https://mail.google.com' },
+  maps: { name: 'Google Maps', pkg: 'com.google.android.apps.maps', web: 'https://maps.google.com' },
+  chrome: { name: 'Chrome', pkg: 'com.android.chrome', web: 'https://www.google.com' },
+  telegram: { name: 'Telegram', pkg: 'org.telegram.messenger', web: 'https://web.telegram.org' },
+  spotify: { name: 'Spotify', pkg: 'com.spotify.music', web: 'https://open.spotify.com' },
+  playstore: { name: 'Play Store', pkg: 'com.android.vending', web: 'https://play.google.com' },
+  facebook: { name: 'Facebook', pkg: 'com.facebook.katana', web: 'https://m.facebook.com' },
+  twitter: { name: 'X', pkg: 'com.twitter.android', web: 'https://x.com' },
+  netflix: { name: 'Netflix', pkg: 'com.netflix.mediaclient', web: 'https://www.netflix.com' },
+  photos: { name: 'Google Photos', pkg: 'com.google.android.apps.photos', web: 'https://photos.google.com' },
+  settings: { name: 'Settings', pkg: 'com.android.settings', web: '' },
+  phone: { name: 'Phone', pkg: 'com.google.android.dialer', web: '' },
+  amazon: { name: 'Amazon', pkg: 'in.amazon.mShop.android.shopping', web: 'https://www.amazon.in' },
+};
+
+const APP_ALIASES = {
+  'whats app': 'whatsapp', watsapp: 'whatsapp', 'you tube': 'youtube', insta: 'instagram', snap: 'snapchat',
+  'google maps': 'maps', map: 'maps', 'play store': 'playstore', 'google play': 'playstore',
+  'google play store': 'playstore', mail: 'gmail', email: 'gmail', 'google chrome': 'chrome', browser: 'chrome',
+  x: 'twitter', dialer: 'phone', 'google photos': 'photos', gallery: 'photos',
+};
+
+function parseAppCommand(text) {
+  const t = String(text).trim().replace(/[.!?]+$/, '');
+  let m = /^(?:please\s+)?(?:open|launch)\s+(?:the\s+)?(.+)$/i.exec(t);
+  if (m) {
+    const clean = (s) => s.toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+    const full = clean(m[1]);
+    const noApp = full.replace(/ app$/, '');
+    for (const c of [full, noApp]) {
+      const key = APP_ALIASES[c] || c.replace(/ /g, '');
+      if (APPS[key]) return { type: 'app', key };
+    }
+    return { type: 'unknown', name: m[1].replace(/\s+app$/i, '') };
+  }
+  m = /^(?:please\s+)?play\s+(.+?)\s+on\s+you\s?tube$/i.exec(t);
+  if (m) return { type: 'url', label: 'YouTube: ' + m[1], url: 'https://m.youtube.com/results?search_query=' + encodeURIComponent(m[1]) };
+  m = /^(?:please\s+)?(?:search|google)\s+(?:for\s+)?(.+)$/i.exec(t);
+  if (m) return { type: 'url', label: 'Search: ' + m[1], url: 'https://www.google.com/search?q=' + encodeURIComponent(m[1]) };
+  return null;
+}
+
+function buildIntentUrl(app) {
+  let u = 'intent:#Intent;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;package=' + app.pkg + ';';
+  if (app.web) u += 'S.browser_fallback_url=' + encodeURIComponent(app.web) + ';';
+  return u + 'end';
+}
+
 if (typeof module !== 'undefined') {
-  module.exports = { parseSSE, deltaFromEvent, cleanForSpeech, buildRequest, streamChat, PRESETS, DEFAULT_SETTINGS };
+  module.exports = { parseSSE, deltaFromEvent, cleanForSpeech, buildRequest, streamChat, findWake, parseAppCommand, buildIntentUrl, APPS, PRESETS, DEFAULT_SETTINGS };
 }
 
 // ---------- UI (browser only) ----------
@@ -163,8 +223,9 @@ if (typeof module !== 'undefined') {
 if (typeof document !== 'undefined') {
   const $ = (id) => document.getElementById(id);
   const els = {
-    msgs: $('msgs'), input: $('input'), send: $('send'), mic: $('mic'), settingsBtn: $('settingsBtn'),
-    dlg: $('dlg'), toast: $('toast'), speakBtn: $('speakBtn'), clearBtn: $('clearBtn'),
+    msgs: $('msgs'), input: $('input'), send: $('send'), orb: $('orb'), status: $('status'),
+    settingsBtn: $('settingsBtn'), dlg: $('dlg'), toast: $('toast'), speakBtn: $('speakBtn'),
+    clearBtn: $('clearBtn'), earBtn: $('earBtn'),
   };
 
   let settings = { ...DEFAULT_SETTINGS };
@@ -175,18 +236,45 @@ if (typeof document !== 'undefined') {
   try {
     history = JSON.parse(localStorage.getItem('edith.history') || '[]');
   } catch (e) {}
+
   let abort = null;
   let busy = false;
+  let state = 'idle'; // idle | listening | thinking | speaking
+  let handsFree = !!settings.wakeWord;
+  let awaitingCommand = false;
+  let directMode = false;
+  let rec = null;
   let currentAudio = null;
+  let cancelSpeakFn = null;
+  let speakToken = 0;
+  let wakeLock = null;
 
-  const saveSettings = () => localStorage.setItem('edith.settings', JSON.stringify(settings));
-  const saveHistory = () => localStorage.setItem('edith.history', JSON.stringify(history.slice(-40)));
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const saveSettings = () => { try { localStorage.setItem('edith.settings', JSON.stringify(settings)); } catch (e) {} };
+  const saveHistory = () => { try { localStorage.setItem('edith.history', JSON.stringify(history.slice(-40))); } catch (e) {} };
 
   function toast(msg) {
     els.toast.textContent = msg;
     els.toast.classList.add('show');
     clearTimeout(toast.t);
-    toast.t = setTimeout(() => els.toast.classList.remove('show'), 4000);
+    toast.t = setTimeout(() => els.toast.classList.remove('show'), 4500);
+  }
+
+  function statusText() {
+    if (state === 'listening') return handsFree && !directMode && !awaitingCommand ? 'Say "Edith"…' : 'Listening…';
+    if (state === 'thinking') return 'Thinking…';
+    if (state === 'speaking') return 'Speaking. Tap E to stop';
+    return handsFree ? 'Say "Edith" or tap E' : 'Tap E to talk';
+  }
+  function setState(s) {
+    state = s;
+    els.orb.dataset.state = s;
+    els.status.textContent = statusText();
+  }
+  function updateEar() {
+    els.earBtn.classList.toggle('on', handsFree);
+    els.earBtn.setAttribute('aria-pressed', handsFree ? 'true' : 'false');
+    els.status.textContent = statusText();
   }
 
   function addBubble(role, text) {
@@ -197,11 +285,22 @@ if (typeof document !== 'undefined') {
     els.msgs.scrollTop = els.msgs.scrollHeight;
     return b;
   }
+  function addLinkBubble(text, href, label) {
+    const b = addBubble('assistant', text);
+    const a = document.createElement('a');
+    a.className = 'applink';
+    a.href = href;
+    if (/^https?:/.test(href)) { a.target = '_blank'; a.rel = 'noopener'; }
+    a.textContent = label;
+    b.appendChild(document.createElement('br'));
+    b.appendChild(a);
+    els.msgs.scrollTop = els.msgs.scrollHeight;
+  }
 
   function renderHistory() {
     els.msgs.textContent = '';
     if (!history.length) {
-      addBubble('assistant', "Hi, I'm Edith, your personal assistant. Open Settings to connect me to an AI brain, then say hello.");
+      addBubble('assistant', "Hi, I'm Edith, your personal assistant. Tap the E to talk to me, or turn on 👂 and just say \"Edith\". Open ⚙️ to connect me to an AI brain.");
     }
     history.forEach((m) => addBubble(m.role, m.content));
   }
@@ -213,25 +312,35 @@ if (typeof document !== 'undefined') {
       currentAudio.pause();
       currentAudio = null;
     }
+    if (cancelSpeakFn) {
+      const f = cancelSpeakFn;
+      cancelSpeakFn = null;
+      f();
+    }
   }
   function playBlob(blob) {
-    const url = URL.createObjectURL(blob);
-    currentAudio = new Audio(url);
-    currentAudio.onended = () => URL.revokeObjectURL(url);
-    return currentAudio.play();
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(blob);
+      const a = new Audio(url);
+      currentAudio = a;
+      a.onended = () => { URL.revokeObjectURL(url); resolve(); };
+      a.onerror = () => resolve();
+      a.play().catch(reject);
+    });
   }
   function browserSpeak(text) {
-    if (!('speechSynthesis' in window)) return;
-    const u = new SpeechSynthesisUtterance(text);
-    const voices = speechSynthesis.getVoices();
-    const v = voices.find((x) => /female|samantha|zira|aria|jenny|google us english/i.test(x.name)) || voices.find((x) => x.lang && x.lang.startsWith('en'));
-    if (v) u.voice = v;
-    speechSynthesis.speak(u);
+    return new Promise((resolve) => {
+      if (!('speechSynthesis' in window)) return resolve();
+      const u = new SpeechSynthesisUtterance(text);
+      const voices = speechSynthesis.getVoices();
+      const v = voices.find((x) => /female|samantha|zira|aria|jenny|google us english/i.test(x.name)) || voices.find((x) => x.lang && x.lang.startsWith('en'));
+      if (v) u.voice = v;
+      u.onend = () => resolve();
+      u.onerror = () => resolve();
+      speechSynthesis.speak(u);
+    });
   }
-  async function speak(text) {
-    const t = cleanForSpeech(text).slice(0, 1900);
-    if (!t || settings.voiceMode === 'off') return;
-    stopSpeaking();
+  async function playChosenVoice(t) {
     try {
       if (settings.voiceMode === 'cartesia') {
         if (!settings.cartesiaKey || !settings.cartesiaVoice) throw new Error('Add Cartesia key and voice ID in Settings');
@@ -258,7 +367,108 @@ if (typeof document !== 'undefined') {
     } catch (e) {
       toast('Using the phone voice instead: ' + e.message);
     }
-    browserSpeak(t);
+    return browserSpeak(t);
+  }
+  async function speak(text) {
+    const t = cleanForSpeech(text).slice(0, 1900);
+    stopSpeaking();
+    const my = ++speakToken;
+    if (t && settings.voiceMode !== 'off') {
+      setState('speaking');
+      const cancelled = new Promise((r) => { cancelSpeakFn = r; });
+      await Promise.race([playChosenVoice(t), cancelled]);
+    }
+    if (my === speakToken) afterSpeak();
+  }
+  function afterSpeak() {
+    if (busy) return;
+    setState('idle');
+    if (awaitingCommand) startRec(true);
+    else if (handsFree) startRec(false);
+  }
+
+  // ----- listening -----
+  function startRec(direct) {
+    if (!SR) { toast('Voice input is not supported in this browser. Try Chrome.'); return; }
+    if (rec || document.hidden) return;
+    directMode = !!direct;
+    let finalText = '';
+    rec = new SR();
+    rec.lang = navigator.language || 'en-IN';
+    rec.interimResults = true;
+    rec.continuous = false;
+    rec.onresult = (ev) => {
+      let interim = '';
+      for (let i = ev.resultIndex; i < ev.results.length; i++) {
+        const r = ev.results[i];
+        if (r.isFinal) finalText += r[0].transcript + ' ';
+        else interim += r[0].transcript;
+      }
+      if (directMode) els.input.value = (finalText + interim).trim();
+    };
+    rec.onerror = (ev) => {
+      if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
+        handsFree = false;
+        awaitingCommand = false;
+        settings.wakeWord = false;
+        saveSettings();
+        updateEar();
+        toast('Please allow the microphone for this app in Chrome site settings.');
+      } else if (ev.error !== 'no-speech' && ev.error !== 'aborted') {
+        toast('Mic: ' + ev.error);
+      }
+    };
+    rec.onend = () => {
+      rec = null;
+      const text = finalText.trim();
+      const wasDirect = directMode;
+      if (!text && wasDirect) awaitingCommand = false;
+      if (state === 'listening') setState('idle');
+      els.input.value = '';
+      if (text) onSpeech(text, wasDirect || awaitingCommand);
+      if (!busy && state === 'idle' && !document.hidden) {
+        if (awaitingCommand) setTimeout(() => startRec(true), 200);
+        else if (handsFree) setTimeout(() => startRec(false), 400);
+      }
+    };
+    try {
+      rec.start();
+      setState('listening');
+    } catch (e) {
+      rec = null;
+    }
+  }
+
+  function onSpeech(text, direct) {
+    if (direct) {
+      awaitingCommand = false;
+      return handleCommand(text);
+    }
+    const w = findWake(text);
+    if (!w) return; // ignore background chatter
+    if (w.command) return handleCommand(w.command);
+    awaitingCommand = true;
+    speak('Yes?');
+  }
+
+  function handleCommand(text) {
+    const cmd = parseAppCommand(text);
+    if (!cmd) return send(text);
+    addBubble('user', text);
+    if (cmd.type === 'app') {
+      const app = APPS[cmd.key];
+      const href = buildIntentUrl(app);
+      addLinkBubble('Opening ' + app.name + '.', href, 'Tap to open ' + app.name);
+      speak('Opening ' + app.name);
+      try { window.location.href = href; } catch (e) {}
+    } else if (cmd.type === 'url') {
+      addLinkBubble(cmd.label, cmd.url, 'Tap to open');
+      speak('Here you go');
+    } else {
+      const names = Object.values(APPS).map((a) => a.name).join(', ');
+      addBubble('assistant', "I can't open " + cmd.name + ' yet. I can open: ' + names + '.');
+      speak("I can't open that app yet.");
+    }
   }
 
   // ----- chat -----
@@ -270,12 +480,14 @@ if (typeof document !== 'undefined') {
   async function send(text) {
     text = (text || '').trim();
     if (!text || busy) return;
+    setBusy(true);
     stopSpeaking();
+    if (rec) { try { rec.abort(); } catch (e) {} }
     els.input.value = '';
     history.push({ role: 'user', content: text });
     addBubble('user', text);
     const bubble = addBubble('assistant', '…');
-    setBusy(true);
+    setState('thinking');
     abort = new AbortController();
     try {
       const full = await streamChat(settings, history, (t) => {
@@ -285,19 +497,20 @@ if (typeof document !== 'undefined') {
       if (!full) throw new Error('The brain sent an empty reply.');
       history.push({ role: 'assistant', content: full });
       saveHistory();
+      setBusy(false);
       speak(full);
     } catch (e) {
       if (e.name === 'AbortError') {
         bubble.textContent = bubble.textContent === '…' ? '(stopped)' : bubble.textContent;
-        history.pop();
       } else {
         bubble.textContent = 'Sorry, I could not reach my brain. ' + e.message;
         bubble.classList.add('error');
-        history.pop();
       }
+      history.pop();
     } finally {
-      setBusy(false);
       abort = null;
+      if (busy) setBusy(false);
+      if (state === 'thinking') afterSpeak();
     }
   }
 
@@ -309,11 +522,10 @@ if (typeof document !== 'undefined') {
     }
   });
   els.clearBtn.onclick = () => {
-    if (confirm('Clear this conversation?')) {
-      history = [];
-      saveHistory();
-      renderHistory();
-    }
+    history = [];
+    saveHistory();
+    renderHistory();
+    toast('Chat cleared');
   };
   els.speakBtn.onclick = () => {
     settings.voiceMode = settings.voiceMode === 'off' ? 'browser' : 'off';
@@ -323,29 +535,51 @@ if (typeof document !== 'undefined') {
     toast(settings.voiceMode === 'off' ? 'Voice off' : 'Voice on');
   };
 
-  // ----- mic -----
-  let rec = null;
-  els.mic.onclick = () => {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) return toast('Voice input is not supported in this browser. Try Chrome.');
-    if (rec) return rec.stop();
-    stopSpeaking();
-    rec = new SR();
-    rec.lang = navigator.language || 'en-US';
-    rec.interimResults = true;
-    rec.onresult = (ev) => {
-      const r = ev.results[ev.results.length - 1];
-      els.input.value = r[0].transcript;
-      if (r.isFinal) send(els.input.value);
-    };
-    rec.onerror = (ev) => toast('Mic error: ' + ev.error);
-    rec.onend = () => {
-      rec = null;
-      els.mic.classList.remove('on');
-    };
-    els.mic.classList.add('on');
-    rec.start();
+  // The big E
+  els.orb.onclick = () => {
+    if (state === 'speaking') { stopSpeaking(); return; }
+    if (busy) { if (abort) abort.abort(); return; }
+    if (rec) {
+      directMode = true; // switch a wake-word listen into a direct listen
+      try { rec.stop(); } catch (e) {}
+      setState('listening');
+      return;
+    }
+    startRec(true);
   };
+
+  // "Say Edith" mode
+  async function requestWake() {
+    try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
+  }
+  function releaseWake() {
+    try { if (wakeLock) wakeLock.release(); } catch (e) {}
+    wakeLock = null;
+  }
+  els.earBtn.onclick = () => {
+    handsFree = !handsFree;
+    settings.wakeWord = handsFree;
+    saveSettings();
+    updateEar();
+    if (handsFree) {
+      requestWake();
+      startRec(false);
+      toast('Say "Edith" any time while this screen is open and on.');
+    } else {
+      releaseWake();
+      awaitingCommand = false;
+      if (rec) { try { rec.abort(); } catch (e) {} }
+      setState('idle');
+    }
+  };
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      if (rec) { try { rec.abort(); } catch (e) {} }
+    } else if (handsFree) {
+      requestWake();
+      if (state === 'idle') startRec(false);
+    }
+  });
 
   // ----- settings dialog -----
   const f = (id) => $(id);
@@ -402,11 +636,15 @@ if (typeof document !== 'undefined') {
     const s = readSettings();
     const out = f('testResult');
     out.textContent = 'Testing…';
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), 25000);
     try {
-      const reply = await streamChat(s, [{ role: 'user', content: 'Reply with just the word: ready' }], () => {});
+      const reply = await streamChat(s, [{ role: 'user', content: 'Reply with just the word: ready' }], () => {}, ac.signal);
       out.textContent = '✓ Connected. Brain said: ' + reply.slice(0, 80);
     } catch (e) {
-      out.textContent = '✗ ' + e.message;
+      out.textContent = e.name === 'AbortError' ? '✗ No answer after 25 seconds. The brain may be busy. Try again.' : '✗ ' + e.message;
+    } finally {
+      clearTimeout(timer);
     }
   };
   els.settingsBtn.onclick = () => {
@@ -417,6 +655,9 @@ if (typeof document !== 'undefined') {
 
   els.speakBtn.textContent = settings.voiceMode === 'off' ? '🔇' : '🔊';
   renderHistory();
+  updateEar();
+  setState('idle');
+  if (handsFree) { requestWake(); startRec(false); }
   if (!settings.apiKey && settings.preset !== 'ollama' && settings.preset !== 'custom') {
     toast('Open Settings to add your brain key');
   }
