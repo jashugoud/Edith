@@ -162,23 +162,23 @@ function findWake(text) {
 
 // --- opening apps by voice ---
 const APPS = {
-  whatsapp: { name: 'WhatsApp', pkg: 'com.whatsapp', web: 'https://web.whatsapp.com' },
-  youtube: { name: 'YouTube', pkg: 'com.google.android.youtube', web: 'https://m.youtube.com' },
-  instagram: { name: 'Instagram', pkg: 'com.instagram.android', web: 'https://www.instagram.com' },
-  snapchat: { name: 'Snapchat', pkg: 'com.snapchat.android', web: 'https://www.snapchat.com' },
-  gmail: { name: 'Gmail', pkg: 'com.google.android.gm', web: 'https://mail.google.com' },
-  maps: { name: 'Google Maps', pkg: 'com.google.android.apps.maps', web: 'https://maps.google.com' },
-  chrome: { name: 'Chrome', pkg: 'com.android.chrome', web: 'https://www.google.com' },
-  telegram: { name: 'Telegram', pkg: 'org.telegram.messenger', web: 'https://web.telegram.org' },
-  spotify: { name: 'Spotify', pkg: 'com.spotify.music', web: 'https://open.spotify.com' },
-  playstore: { name: 'Play Store', pkg: 'com.android.vending', web: 'https://play.google.com' },
-  facebook: { name: 'Facebook', pkg: 'com.facebook.katana', web: 'https://m.facebook.com' },
-  twitter: { name: 'X', pkg: 'com.twitter.android', web: 'https://x.com' },
-  netflix: { name: 'Netflix', pkg: 'com.netflix.mediaclient', web: 'https://www.netflix.com' },
-  photos: { name: 'Google Photos', pkg: 'com.google.android.apps.photos', web: 'https://photos.google.com' },
-  settings: { name: 'Settings', pkg: 'com.android.settings', web: '' },
-  phone: { name: 'Phone', pkg: 'com.google.android.dialer', web: '' },
-  amazon: { name: 'Amazon', pkg: 'in.amazon.mShop.android.shopping', web: 'https://www.amazon.in' },
+  whatsapp: { name: 'WhatsApp', pkg: 'com.whatsapp', scheme: 'whatsapp', host: 'send', web: 'https://web.whatsapp.com' },
+  youtube: { name: 'YouTube', pkg: 'com.google.android.youtube', host: 'www.youtube.com/', web: 'https://m.youtube.com' },
+  instagram: { name: 'Instagram', pkg: 'com.instagram.android', host: 'www.instagram.com/', web: 'https://www.instagram.com' },
+  snapchat: { name: 'Snapchat', pkg: 'com.snapchat.android', scheme: 'snapchat', host: '', web: 'https://www.snapchat.com' },
+  gmail: { name: 'Gmail', pkg: 'com.google.android.gm', host: 'mail.google.com/', web: 'https://mail.google.com' },
+  maps: { name: 'Google Maps', pkg: 'com.google.android.apps.maps', host: 'maps.google.com/', web: 'https://maps.google.com' },
+  chrome: { name: 'Chrome', pkg: 'com.android.chrome', host: 'www.google.com/', web: 'https://www.google.com' },
+  telegram: { name: 'Telegram', pkg: 'org.telegram.messenger', scheme: 'tg', host: '', web: 'https://web.telegram.org' },
+  spotify: { name: 'Spotify', pkg: 'com.spotify.music', host: 'open.spotify.com/', web: 'https://open.spotify.com' },
+  playstore: { name: 'Play Store', pkg: 'com.android.vending', host: 'play.google.com/store', web: 'https://play.google.com' },
+  facebook: { name: 'Facebook', pkg: 'com.facebook.katana', host: 'www.facebook.com/', web: 'https://m.facebook.com' },
+  twitter: { name: 'X', pkg: 'com.twitter.android', host: 'x.com/', web: 'https://x.com' },
+  netflix: { name: 'Netflix', pkg: 'com.netflix.mediaclient', host: 'www.netflix.com/', web: 'https://www.netflix.com' },
+  photos: { name: 'Google Photos', pkg: 'com.google.android.apps.photos', host: 'photos.google.com/', web: 'https://photos.google.com' },
+  settings: { name: 'Settings', action: 'android.settings.SETTINGS', web: '' },
+  phone: { name: 'Phone', action: 'android.intent.action.DIAL', web: '' },
+  amazon: { name: 'Amazon', pkg: 'in.amazon.mShop.android.shopping', host: 'www.amazon.in/', web: 'https://www.amazon.in' },
 };
 
 const APP_ALIASES = {
@@ -209,7 +209,9 @@ function parseAppCommand(text) {
 }
 
 function buildIntentUrl(app) {
-  let u = 'intent:#Intent;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;package=' + app.pkg + ';';
+  if (app.action) return 'intent:#Intent;action=' + app.action + ';end';
+  const scheme = app.scheme || 'https';
+  let u = 'intent://' + (app.host || '') + '#Intent;scheme=' + scheme + ';package=' + app.pkg + ';';
   if (app.web) u += 'S.browser_fallback_url=' + encodeURIComponent(app.web) + ';';
   return u + 'end';
 }
