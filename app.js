@@ -162,7 +162,7 @@ function findWake(text) {
 
 // --- opening apps by voice ---
 const APPS = {
-  whatsapp: { name: 'WhatsApp', pkg: 'com.whatsapp', scheme: 'whatsapp', host: 'send', web: 'https://web.whatsapp.com' },
+  whatsapp: { name: 'WhatsApp', pkg: 'com.whatsapp', scheme: 'whatsapp', host: '', web: 'https://web.whatsapp.com' },
   youtube: { name: 'YouTube', pkg: 'com.google.android.youtube', host: 'www.youtube.com/', web: 'https://m.youtube.com' },
   instagram: { name: 'Instagram', pkg: 'com.instagram.android', host: 'www.instagram.com/', web: 'https://www.instagram.com' },
   snapchat: { name: 'Snapchat', pkg: 'com.snapchat.android', scheme: 'snapchat', host: '', web: 'https://www.snapchat.com' },
